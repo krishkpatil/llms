@@ -8,10 +8,27 @@ import json
 from rembg import remove  # Import rembg for background removal
 
 # Streamlit interface
-st.title("Instagram Post Analyzer and Image Generator with Image Editing")
+st.title("🛍️ AI-Powered Product Analyzer and Image Generator")
+
+# Add an expander for the introductory section
+with st.expander("ℹ️ About This Application", expanded=True):
+    st.write("""
+    Welcome to the **AI-Powered Product Analyzer and Image Generator**! This application allows you to:
+    - Analyze Instagram posts to fetch and analyze product details.
+    - Upload your own images with descriptions to generate product information and create or edit images using AI technology.
+
+    **Usage Options:**
+    - **Option 1:** Enter an Instagram post URL to fetch and analyze the product details.
+    - **Option 2:** Upload an image and provide a caption to analyze and generate product information.
+
+    **Important Note:**
+    - This application requires your OpenAI API key to function, as it uses state-of-the-art models like **GPT-4o Mini** and **DALL·E 3** for analysis and image generation.
+    - Your API key is not stored by this application.
+    """)
 
 # Sidebar
 with st.sidebar:
+    st.header("🔒 API Key Setup")
     # Input field for OpenAI API key
     openai_api_key = st.text_input("OpenAI API Key", type="password")
     st.caption("We do not store your OpenAI API key. Paste it here to power the chatbot. [Get your OpenAI API key](https://platform.openai.com/account/api-keys)")
@@ -137,6 +154,22 @@ def analyze_post_and_generate_prompt(caption):
         st.error(f"Error analyzing post and generating product listing: {e}")
         return None
 
+# Function to generate an image using DALL·E
+def generate_image(prompt):
+    try:
+        response = openai.images.generate(
+            model='dall-e-3',
+            prompt=prompt,
+            n=1,
+            size="1024x1024"
+        )
+        image_url = response.data[0].url
+        return image_url
+    except Exception as e:
+        st.error(f"Error generating image: {e}")
+        return None
+
+
 # Function to generate an image edit
 def generate_image_edit(prompt, image, mask):
     try:
@@ -158,6 +191,7 @@ def generate_image_edit(prompt, image, mask):
         mask_bytes.seek(0)
 
         response = openai.images.edit(
+            model="dall-e-2",
             image=image_bytes,
             mask=mask_bytes,
             prompt=prompt,
@@ -197,23 +231,43 @@ if uploaded_file is not None:
     caption_input = st.text_area("Enter the product caption or description:")
 
 if st.button("Analyze and Generate Product Listing"):
-    if url:
-        # Proceed with Instagram content
-        caption, image_url = get_instagram_post_content(url)
-        if caption and image_url:
-            st.session_state.caption = caption
-            st.session_state.image_url = image_url
-            # Download the image
-            img = download_image(image_url)
-            if img:
-                st.session_state.original_image = img
-                # Remove background
-                processed_img = remove_background(img)
-                st.session_state.processed_image = processed_img
+    with st.spinner("Analyzing and generating product listing..."):
+        if url:
+            # Proceed with Instagram content
+            caption, image_url = get_instagram_post_content(url)
+            if caption and image_url:
+                st.session_state.caption = caption
+                st.session_state.image_url = image_url
+                # Download the image
+                img = download_image(image_url)
+                if img:
+                    st.session_state.original_image = img
+                    # Remove background
+                    processed_img = remove_background(img)
+                    st.session_state.processed_image = processed_img
+                else:
+                    st.error("Failed to download image.")
+                # Analyze post and generate product listing and DALL·E prompt
+                product_listing = analyze_post_and_generate_prompt(caption)
+                if product_listing:
+                    st.session_state.product_listing = product_listing
+                    st.session_state.dalle_prompt = product_listing.get("image_prompt")
+                    st.session_state.generated_image_url = None  # Reset generated image
+                else:
+                    st.error("Failed to generate product listing.")
             else:
-                st.error("Failed to download image.")
-            # Analyze post and generate product listing and DALL·E prompt
-            product_listing = analyze_post_and_generate_prompt(caption)
+                st.error("Failed to retrieve caption or image from Instagram.")
+        elif uploaded_file is not None and caption_input:
+            # Proceed with uploaded image and user-provided caption
+            st.session_state.caption = caption_input
+            # Load the uploaded image
+            img = Image.open(uploaded_file).convert("RGBA")
+            st.session_state.original_image = img
+            # Remove background
+            processed_img = remove_background(img)
+            st.session_state.processed_image = processed_img
+            # Analyze caption and generate product listing and DALL·E prompt
+            product_listing = analyze_post_and_generate_prompt(caption_input)
             if product_listing:
                 st.session_state.product_listing = product_listing
                 st.session_state.dalle_prompt = product_listing.get("image_prompt")
@@ -221,26 +275,7 @@ if st.button("Analyze and Generate Product Listing"):
             else:
                 st.error("Failed to generate product listing.")
         else:
-            st.error("Failed to retrieve caption or image from Instagram.")
-    elif uploaded_file is not None and caption_input:
-        # Proceed with uploaded image and user-provided caption
-        st.session_state.caption = caption_input
-        # Load the uploaded image
-        img = Image.open(uploaded_file).convert("RGBA")
-        st.session_state.original_image = img
-        # Remove background
-        processed_img = remove_background(img)
-        st.session_state.processed_image = processed_img
-        # Analyze caption and generate product listing and DALL·E prompt
-        product_listing = analyze_post_and_generate_prompt(caption_input)
-        if product_listing:
-            st.session_state.product_listing = product_listing
-            st.session_state.dalle_prompt = product_listing.get("image_prompt")
-            st.session_state.generated_image_url = None  # Reset generated image
-        else:
-            st.error("Failed to generate product listing.")
-    else:
-        st.error("Please enter a valid Instagram post URL or upload an image with a caption.")
+            st.error("Please enter a valid Instagram post URL or upload an image with a caption.")
 
 # Display the caption if available
 if st.session_state.caption:
@@ -277,18 +312,27 @@ if st.session_state.dalle_prompt is not None:
     # Button to generate image edit using the mask
     if st.button("Generate Image Edit with DALL·E"):
         if st.session_state.original_image and st.session_state.processed_image:
-            st.session_state.generated_image_url = generate_image_edit(
-                st.session_state.dalle_prompt,
-                st.session_state.original_image,
-                st.session_state.processed_image
-            )
+            with st.spinner("Generating edited image..."):
+                st.session_state.generated_image_url = generate_image_edit(
+                    st.session_state.dalle_prompt,
+                    st.session_state.original_image,
+                    st.session_state.processed_image
+                )
+            if st.session_state.generated_image_url:
+                st.success("Edited image generated successfully!")
+                st.image(st.session_state.generated_image_url, caption='Generated Edited Image', use_container_width=True)
+            else:
+                st.error("Failed to generate edited image.")
         else:
             st.error("Original image or mask not available.")
-    # Optionally, you can still provide the option to generate a new image
-    elif st.button("Generate New Image from DALL·E Prompt"):
-        st.session_state.generated_image_url = generate_image(st.session_state.dalle_prompt)
 
-# Display the generated image if it has been created
-if st.session_state.generated_image_url:
-    st.subheader("Generated Image:")
-    st.image(st.session_state.generated_image_url, caption='Generated by DALL·E', use_container_width=True)
+    # Button to generate a new image from the DALL·E prompt
+    if st.button("Generate New Image from DALL·E Prompt"):
+        with st.spinner("Generating new image..."):
+            st.session_state.generated_image_url = generate_image(st.session_state.dalle_prompt)
+        if st.session_state.generated_image_url:
+            st.success("New image generated successfully!")
+            st.image(st.session_state.generated_image_url, caption='Generated New Image', use_container_width=True)
+        else:
+            st.error("Failed to generate new image.")
+
